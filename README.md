@@ -1,6 +1,6 @@
-# AOTR Hub — Attack on Titan: Reborn Autofarm
+# AOTR Hub — Attack on Titan: Rebirth Autofarm
 
-AFK farming hub for **Attack on Titan: Reborn** (Roblox). Hover-combat loop with
+AFK farming hub for **Attack on Titan: Rebirth** (Roblox). Hover-combat loop with
 humanized timing, mission automation, auto-upgrades, Waves support, and a premium
 Obsidian UI. Targets live-verified remote contracts — no guessed payloads.
 
@@ -21,7 +21,7 @@ Obsidian UI. Targets live-verified remote contracts — no guessed payloads.
 
 ## Install
 
-1. Join Attack on Titan: Reborn.
+1. Join Attack on Titan: Rebirth.
 2. Open your executor and run `src/AOTR-Hub.luau`.
 3. Press `RightControl` (configurable) to show/hide the menu.
 4. Farm tab → **Auto-Start Missions** + **Auto Farm**. Or pick a one-click preset.
@@ -53,3 +53,4 @@ If the game updates its remotes, expect breakage until contracts are re-mapped.
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
