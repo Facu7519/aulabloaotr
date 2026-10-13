@@ -1,11 +1,11 @@
-# AOTR Hub — Attack on Titan: Rebirth Autofarm
+# AOTR Hub — Attack on Titan: Revolution Autofarm
 
-AFK farming script for **Attack on Titan: Rebirth** (Roblox). Hover-combat loop,
+AFK farming script for **Attack on Titan: Revolution** (Roblox). Hover-combat loop,
 mission automation, auto-upgrades, Waves support, Obsidian UI. Remote calls match
 contracts verified against decompiled game code.
 
 > **Status:** v8.4 — lobby load verified live. Mission effect pending final check.
-> **Game:** Attack on Titan: Rebirth · **UI:** Obsidian · **Language:** Luau
+> **Game:** Attack on Titan: Revolution · **UI:** Obsidian · **Language:** Luau
 
 ## Features
 
@@ -21,7 +21,7 @@ contracts verified against decompiled game code.
 
 ## Install
 
-1. Join Attack on Titan: Rebirth.
+1. Join Attack on Titan: Revolution.
 2. Open your executor and run `src/AOTR-Hub.luau`.
 3. Press `RightControl` (configurable) to show/hide the menu.
 4. Farm tab → **Auto-Start Missions** + **Auto Farm**. Or pick a one-click preset.
