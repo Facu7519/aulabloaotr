@@ -49,3 +49,7 @@ AGENTS.md           ← contributor rules (humans + AI)
 
 Educational / personal-use project. Not affiliated with the game developers.
 If the game updates its remotes, expect breakage until contracts are re-mapped.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
