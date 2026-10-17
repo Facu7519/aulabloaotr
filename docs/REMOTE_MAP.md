@@ -7,6 +7,9 @@
 > v8.1: decompiled `Core.ODMG` — speeds Default=300/Nuke=450 (script hover capped 260),
 > M1 frames Floor 13/30s–Air 11/30s–Spear 35/60s. NO client-side attack-cooldown
 > constant found (server-side silent reject) → 1.6s floor is conservative heuristic.
+> Re-validated: 2026-10-17 via Real MCP (LOBBY Place 14916516914, PV9150): the
+> player-save endpoint moved to `Functions/Keybinds`; `Equipment.Delete` contract,
+> save shapes, rarity catalogs and the Secret→Mythic retier documented below.
 > Game Version: Place 14012874501 (Trost), PlaceVersion 5710
 
 ## Remote Architecture
@@ -88,13 +91,101 @@ Send("S_Skills", "Impact", skillId, position)
 
 | Remote | Type | Args | Purpose |
 |--------|------|------|---------|
-| `Functions/Settings/Get` | GET | none | Get player settings |
+| `Functions/Keybinds` | GET | none | **Full player save** (Slots/Perks/Artifacts/Currency…) — v8.5. `Functions/Settings` now returns zero values (legacy fallback only) |
 | `Functions/Teleport` | GET/POST | via Send | Teleport to lobby |
 | `Functions/Retry` | GET | "Add" | Retry mission |
 | `Functions/Ragdoll` | POST | force | Ragdoll player |
-| `Data/Copy` | GET | none | Get match data |
+| `Data/Copy` | GET | none | Get match data (consumed at join by `Core.Lobby.Loader`; not reliably re-callable) |
 | `Stats/Get` | GET | none | Get stats |
 | `Stats/Gas_Supply` | POST | gasPart | Gas supply interaction |
+| `Functions/Auto_Sell` | GET | category, name, bool | Game's own auto-sell config; returns new `Auto_Sell` table |
+
+## Lobby Save, Catalogs & Equipment (v8.5 — live audit 2026-10-17 @ Place 14916516914 PV9150)
+
+### Save endpoint & shapes
+
+```
+GET: InvokeServer("Functions", "Keybinds")   -- no args -> full save
+```
+
+- Returns `Slots[A/B/C]` plus top-level `Current_Slot`, `Settings`, `Spins`,
+  `Auto_Sell`, `Tutorial`, `T_Perks`. Table names still say "Keybinds" (game
+  quirk) — verified live 4/4 with spaced calls, not a rate-limit artifact.
+- `("Functions","Settings")` returns **zero values** (dead since the 2026-10
+  update) — kept only as legacy fallback in the script.
+- `("Data","Copy")` is consumed in a loop by `Core.Lobby.Loader` at join; do not
+  rely on it being re-callable later. In the lobby, use Keybinds.
+
+```
+Slots[X].Perks       = { Storage = {uuid -> {Name, Level, XP}}, Equipped = {Slot -> uuid}, Amount, Redo }
+Slots[X].Artifacts   = { Storage = {uuid -> {Name, Stats, Locked}}, Equipped = {Body/Head -> {Vanity, ID}}, Amount, Check, Redo }
+Slots[X].Upgrades    = { Blades = {...}, Spears = {...} }
+Slots[X].Currency    = { Gold, Gems, Canes, Shards }
+Slots[X].Progression = { Prestige, Level, XP, Max_XP }
+```
+
+- Storage entries carry **no Rarity** — resolve by `Name` against the catalogs.
+- `Artifacts.Locked = {statLocks…}` = per-stat **reroll** locks (decompiled
+  `Artifact_Roll`: `Locked[k] == false` → "Are you sure you want to roll a good
+  stat?"; both true → "Artifact stats are locked!"). NOT a sell guard —
+  27/27 sampled entries carry it, mostly `[false,false]`.
+- The ONLY sell guard is equip state: `Equipped{Body/Head}.ID` (artifacts) /
+  `Equipped[Slot]` (perks). Game UI: "Cannot sell an equipped item!".
+
+### Rarity catalogs (client-readable, authoritative)
+
+| Path | Shape |
+|------|-------|
+| `Modules.Storage.Perks` | `{Common/Rare/Epic/Legendary/Mythic -> name -> {Type, Stats{Stat={Base,Increment}}}}` |
+| `Modules.Storage.Items` | `name -> {Rarity, Image, …}` — includes artifacts; rarity values seen: Common/Uncommon/Rare/Epic/Legendary/Mythic/Exclusive |
+| `Modules.Storage.Artifacts` | artifact structure (`Slot/Passives/Stats`); **no rarity** — use `Storage.Items` by Name |
+
+- **Secret→Mythic retier (2026-10)**: the old "Secret" perk tier is now
+  **Mythic** — same 14 names (live-verified 14/14). The hub's static map still
+  labels them "Secret" on purpose: v8.4 intent is *never sold*, opt-in only.
+- Live counts 2026-10-17: Common 9 / Rare 12 / Epic 20 / Legendary 23 /
+  Mythic 14 (78 unique names; all 68 perk names in the audited save resolved).
+
+### `GET: S_Equipment/Delete` — sell perks/artifacts (decompiled)
+
+```
+InvokeServer("S_Equipment", "Delete", Type, {id1, id2, ...})
+```
+
+- `Type`: `"Perk"` | `"Artifact"` (singular).
+- Payload: array of **IDs** — the `Storage` dict keys (same value as the UI
+  frame's `GetAttribute("ID")`). NOT the entry tables.
+- The game batches the WHOLE selection into one call (can be hundreds of ids).
+- Returns the **new full save** (assign to `Cache.Data`; `Topbar.Refresh`).
+- Client-side guards: empty selection + equipped items (checked at select time).
+- Hub helpers `_G.AOTR.deletePerk/deleteArtifact` take that id array directly.
+
+### `GET: S_Equipment/Perk_State` & `Artifact_State` — equip/unequip
+
+```
+InvokeServer("S_Equipment", "Perk_State", id, "Equip"|"Unequip", Category)
+InvokeServer("S_Equipment", "Artifact_State", id, "Equip"|"Unequip", Category)  -- Category: Head|Body
+InvokeServer("S_Equipment", "Artifact_Vanity", Category)                        -- -> save, ?, bool
+```
+
+- `Artifact_State` returns `save, rarity, image, …` (Equip appends appearance
+  data: `v6 == true, v7` → add cosmetic). Assign first return to `Cache.Data`.
+
+### Client architecture (where the game's own code lives)
+
+- Game client tree: `Workspace.Characters.<name>.Actor.Client` (LocalScript) →
+  `require(Actor.Client.Host)`. `Host:Invoke` = `GET:InvokeServer` (re-entrancy
+  mutex on `.Invoked`); `Host:Send` = `POST:FireServer`. Server pushes the save
+  via `Modules.Core.Update.Data`; read with `Update.Get_Data`.
+- UI modules: `Modules.User Interface.*`. Machinery screens are **nested** under
+  `Equipment` (child ModuleScripts): Hotbar, Perk, Enhance, Perking, Craft,
+  Prestige, Artifact, Delete, Mastery, Skill, Shifter, Details, Loadouts,
+  Configure, Edit, Dice. A depth-1 tree walk misses them (Host registers via
+  `GetDescendants`) — decompile by full path, e.g.
+  `Modules.User Interface.Equipment.Delete`.
+- Game's own Auto_Sell UI: `Modules.User Interface.Auto_Sell` →
+  `("Functions","Auto_Sell", category, name, bool)` → new `Auto_Sell` table →
+  stored at `Cache.Data.Auto_Sell`.
 
 ## Blade System
 

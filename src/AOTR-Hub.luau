@@ -1,4 +1,4 @@
--- aotr — Reverse Engineering T Hub (v8.1)
+-- aotr — Reverse Engineering T Hub (v8.5)
 -- CONTENTS (search these anchors):
 --   §BOOT      services/remotes/Endpoints catalog/safeInvoke+safeFire/probe
 --   §VALID     Validators (char/root/humanoid/nape/refillPart/marketBuy)
@@ -259,7 +259,10 @@ end
 local lastPlayerData, lastPlayerDataTime = nil, 0
 local function GetPlayerData()
 	if os.clock() - lastPlayerDataTime < 0.5 and lastPlayerData then return lastPlayerData end
-	lastPlayerData = safeInvoke("Functions", "Settings")
+	-- v8.5: the save moved to ("Functions","Keybinds") (live-verified 2026-10-17,
+	-- place 14916516914 PV9150): full Slots/Perks/Artifacts/Currency. The old
+	-- ("Functions","Settings") returns zero values now — kept as legacy fallback.
+	lastPlayerData = safeInvoke("Functions", "Keybinds") or safeInvoke("Functions", "Settings")
 	lastPlayerDataTime = os.clock()
 	return lastPlayerData
 end
@@ -2275,8 +2278,40 @@ local SkillPaths = {
 	Support = { Regen = Support_Regen, ["Cooldown Reduction"] = Support_Cooldown_Reduction }
 }
 
+-- v8.5: dynamic module lookup + indirect require (pcall-guarded; keeps the
+-- analyzer clean of unresolvable instance requires). Path = segments under
+-- ReplicatedStorage, e.g. {"Modules","Storage","Perks"}.
+local moduleLoader = function(path)
+	local current = game:GetService("ReplicatedStorage")
+	for _, segment in ipairs(path) do
+		current = current:FindFirstChild(segment)
+		if current == nil then return nil end
+	end
+	local ok, result = pcall(require, current)
+	return (ok and type(result) == "table") and result or nil
+end
+
+-- v8.5: static map first (preserves v8.4 semantics: the legacy "Secret" tier —
+-- now the game's Mythic tier, same 14 names, verified live 2026-10-17 — keeps its
+-- never-sell behavior), then the live game catalog for names the static map
+-- doesn't know (post-renovation additions: Modules.Storage.Perks tiers
+-- Common/Rare/Epic/Legendary/Mythic -> name -> {Type, Stats}).
+local _runtimePerkRarity = nil
 local function GetPerkRarity(perkName)
-	return PerkRarityMap[perkName]
+	local known = PerkRarityMap[perkName]
+	if known then return known end
+	if _runtimePerkRarity == nil then
+		_runtimePerkRarity = {}
+		local catalog = moduleLoader({ "Modules", "Storage", "Perks" })
+		if catalog then
+			for rarity, names in pairs(catalog) do
+				if type(names) == "table" then
+					for name in pairs(names) do _runtimePerkRarity[name] = rarity end
+				end
+			end
+		end
+	end
+	return _runtimePerkRarity[perkName]
 end
 
 local function GetPerkXP(rarity, level)
@@ -5596,14 +5631,55 @@ AutoSellGroup:AddToggle("AutoSellArtifactsToggle", {
 	Tooltip = "Sells artifacts of selected rarities (Secrets and equipped items are never sold)",
 })
 
--- v8.4: NEVER sell Secrets or equipped/used items, whatever rarity the user
--- selected. Shape-agnostic guard (checks several flag names; missing keys
--- simply don't match, so worst case it skips an extra item — safe direction).
-local function sellable(item)
-	if type(item) ~= "table" then return false end
-	if item.Rarity == "Secret" then return false end
-	if item.Equipped or item.Used or item.Active or item.Locked then return false end
-	return true
+-- v8.5: real save shapes (live-audited 2026-10-17, place 14916516914 PV9150):
+--   Perks.Storage      = {uuid -> {Name, Level, XP}}         (no Rarity field)
+--   Perks.Equipped     = {Slot -> uuid}
+--   Artifacts.Storage  = {uuid -> {Name, Stats, Locked}}     (Locked = per-stat
+--     REROLL locks, NOT sell locks — the game's only sell guard is "equipped")
+--   Artifacts.Equipped = {Body/Head -> {Vanity, ID}}
+-- Rarity is resolved by name: game catalogs (Storage.Perks / Storage.Items for
+-- artifacts). Delete contract (decompiled Equipment.Delete, 2026-10-17): one
+-- batched GET S_Equipment/Delete ("Perk"|"Artifact", {id, ...}) per pass,
+-- payload = Storage ids, returns the new full save.
+local _artifactRarity = nil
+local function ResolveArtifactRarity(name)
+	if _artifactRarity == nil then
+		_artifactRarity = {}
+		local catalog = moduleLoader({ "Modules", "Storage", "Items" })
+		if catalog then
+			for itemName, data in pairs(catalog) do
+				if type(data) == "table" and data.Rarity then _artifactRarity[itemName] = data.Rarity end
+			end
+		end
+	end
+	return _artifactRarity[name]
+end
+
+-- Never sells: equipped items (game rule: "Cannot sell an equipped item!"),
+-- unresolved-rarity items, the legacy Secret tier (see GetPerkRarity), and
+-- anything whose rarity the user did not select.
+local function sellable(entry, id, equippedIds, raritySet, rarityOf)
+	if type(entry) ~= "table" then return false end
+	if equippedIds[id] then return false end
+	local rarity = rarityOf(entry.Name)
+	if rarity == nil or rarity == "Secret" then return false end
+	return raritySet[rarity] == true
+end
+
+local function collectBatch(storage, equipped, raritySet, rarityOf, cap)
+	local equippedIds = {}
+	for _, v in pairs(equipped) do
+		local id = type(v) == "table" and v.ID or v
+		if type(id) == "string" and id ~= "" then equippedIds[id] = true end
+	end
+	local batch = {}
+	for id, entry in pairs(storage) do
+		if sellable(entry, id, equippedIds, raritySet, rarityOf) then
+			table.insert(batch, id)
+			if #batch >= cap then break end
+		end
+	end
+	return batch
 end
 
 Toggles.AutoSellToggle:OnChanged(function()
@@ -5617,24 +5693,24 @@ Toggles.AutoSellToggle:OnChanged(function()
 			Toggles.AutoSellToggle:SetValue(false)
 			return
 		end
-		local pData = GetPlayerData()
-		local slot = lp:GetAttribute("Slot") or (pData and pData.Current_Slot)
-		if not pData or not pData.Slots or not slot or not pData.Slots[slot] then return end
-		local perks = pData.Slots[slot].Perks or {}
 		local raritySet = {}
 		for _, r in ipairs(rarities) do raritySet[r] = true end
 		while getgenv().AutoSellPerks do
-			for _, perk in ipairs(perks) do
-				if not getgenv().AutoSellPerks then break end
-				if perk and perk.Rarity and raritySet[perk.Rarity] and sellable(perk) then
-					local ok = _G.AOTR.deletePerk({ perk })
-					if ok then
-						Library:Notify({ Title = "Auto Sell", Description = "Sold " .. (perk.Name or perk.Rarity) .. " perk", Time = 1.5 })
+			local pData = GetPlayerData()
+			local slot = lp:GetAttribute("Slot") or (pData and pData.Current_Slot)
+			local slotData = pData and pData.Slots and slot and pData.Slots[slot]
+			if slotData then
+				local perks = slotData.Perks or {}
+				local batch = collectBatch(perks.Storage or {}, perks.Equipped or {}, raritySet, GetPerkRarity, 10)
+				if #batch > 0 then
+					if _G.AOTR.deletePerk(batch) then
+						lastPlayerData, lastPlayerDataTime = nil, 0
+						Library:Notify({ Title = "Auto Sell", Description = "Sold " .. #batch .. (#batch == 1 and " perk" or " perks"), Time = 1.5 })
 					end
-					task.wait(0.3 + math.random() * 0.3)
+					task.wait(humanWait(0.6, 0.5))
 				end
 			end
-			task.wait(2)
+			task.wait(humanWait(2, 1.2))
 		end
 	end)
 end)
@@ -5650,24 +5726,24 @@ Toggles.AutoSellArtifactsToggle:OnChanged(function()
 			Toggles.AutoSellArtifactsToggle:SetValue(false)
 			return
 		end
-		local pData = GetPlayerData()
-		local slot = lp:GetAttribute("Slot") or (pData and pData.Current_Slot)
-		if not pData or not pData.Slots or not slot or not pData.Slots[slot] then return end
-		local artifacts = pData.Slots[slot].Artifacts or {}
 		local raritySet = {}
 		for _, r in ipairs(rarities) do raritySet[r] = true end
 		while getgenv().AutoSellArtifacts do
-			for _, art in ipairs(artifacts) do
-				if not getgenv().AutoSellArtifacts then break end
-				if art and art.Rarity and raritySet[art.Rarity] and sellable(art) then
-					local ok = _G.AOTR.deleteArtifact({ art })
-					if ok then
-						Library:Notify({ Title = "Auto Sell", Description = "Sold " .. (art.Name or art.Rarity) .. " artifact", Time = 1.5 })
+			local pData = GetPlayerData()
+			local slot = lp:GetAttribute("Slot") or (pData and pData.Current_Slot)
+			local slotData = pData and pData.Slots and slot and pData.Slots[slot]
+			if slotData then
+				local artifacts = slotData.Artifacts or {}
+				local batch = collectBatch(artifacts.Storage or {}, artifacts.Equipped or {}, raritySet, ResolveArtifactRarity, 10)
+				if #batch > 0 then
+					if _G.AOTR.deleteArtifact(batch) then
+						lastPlayerData, lastPlayerDataTime = nil, 0
+						Library:Notify({ Title = "Auto Sell", Description = "Sold " .. #batch .. (#batch == 1 and " artifact" or " artifacts"), Time = 1.5 })
 					end
-					task.wait(0.3 + math.random() * 0.3)
+					task.wait(humanWait(0.6, 0.5))
 				end
 			end
-			task.wait(2)
+			task.wait(humanWait(2, 1.2))
 		end
 	end)
 end)

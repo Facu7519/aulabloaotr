@@ -1,6 +1,54 @@
 # AOT:R Script Changelog — Reverse Engineering T Hub.txt
 
-## v8.4 — 2026-10-12 (Current)
+## v8.5 — 2026-10-17 (Current)
+
+> Game-update follow-up (lobby Place 14916516914, PV9150): the save endpoint
+> moved and the real save shapes changed — Auto-Sell was dead (iterated
+> arrays that are dicts, entries carry no Rarity) and Auto-Prestige/
+> Auto-Enhance got nil data. All fixed against decompiled game code and
+> verified live this session.
+
+### Fixed (live-verified)
+
+1. **Save endpoint**: `("Functions","Settings")` returns zero values since the
+   2026-10 update — the save now lives at `("Functions","Keybinds")`
+   (full Slots/Perks/Artifacts/Currency). GetPlayerData tries Keybinds first,
+   Settings as legacy fallback. Restores Auto-Prestige, Auto-Enhance and
+   Auto-Sell data flow.
+2. **Auto-Sell rewrite** (perks + artifacts): real shapes are dicts
+   (`Storage = {uuid -> {Name, Level, XP}}`), not arrays — now iterated with
+   `pairs`, rarity resolved **by name** via the game catalogs
+   (`Storage.Perks` / `Storage.Items`), equipped items skipped via the
+   `Equipped` ID sets, sales batched (up to 10 ids per call) using the game's
+   own Delete contract: `S_Equipment/Delete(Type, {id, ...})` → new full save.
+   Cache invalidated after each sale; waits are bell-curved (`humanWait`),
+   replacing uniform `math.random` sleeps.
+3. **Artifacts `Locked` decoded**: it is the per-STAT reroll lock array
+   (`Artifact_Roll`), NOT a sell lock — the only sell guard is equipped
+   (decompiled `Equipment.Delete.Check_Item`: "Cannot sell an equipped item!").
+   27/27 live entries audited.
+4. **Secret→Mythic retier**: the game renamed the tier (same 14 names,
+   14/14 live-verified). The static map keeps labeling them "Secret" on
+   purpose — v8.4 intent: never sold. `GetPerkRarity` now falls back to the
+   live catalog for names the static map doesn't know (future content).
+5. **New helper**: `moduleLoader` — pcall-guarded dynamic require (keeps the
+   Luau analyzer clean of unresolvable instance requires).
+
+### DoD live v8.5 (lobby, gen 6)
+
+- Static check: edited blocks analyzer-clean (Luau LSP + Real lint).
+- Load verified: `_G.AOTR` + Settings + Obsidian UI present; the known
+  contained theme warning (saved Background Image Real can't cache) is
+  unchanged — user action still pending: clear Background Image in Theme.
+- Effect verified: dry-run batch selection on live save (string-id batches,
+  0 equipped leaked) + E2E sell of one junk Common L0 perk
+  (`_G.AOTR.deletePerk({id})`): server returned the new save, Perks
+  count/Amount 1075 → 1074, refetch persisted.
+- Docs: `REMOTE_MAP.md` live-audit section — Keybinds contract, save shapes,
+  Delete / Perk_State / Artifact_State / Artifact_Vanity contracts, rarity
+  catalogs, retier note, client architecture (nested UI modules).
+
+## v8.4 — 2026-10-12
 
 > Stall preset removed (approved, ban risk) + adopted external-list ideas that
 > survived audit (failsafe slider, sell protection, performance combo, nape

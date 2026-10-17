@@ -4,7 +4,8 @@ AFK farming script for **Attack on Titan: Revolution** (Roblox). Hover-combat lo
 mission automation, auto-upgrades, Waves support, Obsidian UI. Remote calls match
 contracts verified against decompiled game code.
 
-> **Status:** v8.4 — lobby load verified live. Mission effect pending final check.
+> **Status:** v8.5 — lobby load verified live; auto-sell delete verified E2E
+> (1 junk perk sold, save persisted). Mission effect pending final check.
 > **Game:** Attack on Titan: Revolution · **UI:** Obsidian · **Language:** Luau
 
 ## Features
