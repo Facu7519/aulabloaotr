@@ -1,5 +1,9 @@
 # AOTR Hub — Attack on Titan: Revolution Autofarm
 
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Language](https://img.shields.io/badge/language-Luau-00A2FF.svg)
+![Status](https://img.shields.io/badge/status-v8.5-success.svg)
+
 AFK farming script for **Attack on Titan: Revolution** (Roblox). Hover-combat loop,
 mission automation, auto-upgrades, Waves support, Obsidian UI. Remote calls match
 contracts verified against decompiled game code.
@@ -23,7 +27,7 @@ contracts verified against decompiled game code.
 ## Install
 
 1. Join Attack on Titan: Revolution.
-2. Open your executor and run `src/AOTR-Hub.luau`.
+2. Open your executor and run **[`src/AOTR-Hub.luau`](src/AOTR-Hub.luau)** (or its [raw copy](https://raw.githubusercontent.com/Facu7519/aulabloaotr/main/src/AOTR-Hub.luau)).
 3. Press `RightControl` (configurable) to show/hide the menu.
 4. Farm tab → **Auto-Start Missions** + **Auto Farm**. Or pick a one-click preset.
 
